@@ -14,6 +14,7 @@ public class AudioMeasure : MonoBehaviour
     /*private const float RefValue = 1.1f;*/
     private const float Threshold = 0.2f;
 
+
     private const float ScaleFactorAmplitude = 1500;
     private const float ScaleFactorSpectrum = 500;
 
@@ -21,16 +22,16 @@ public class AudioMeasure : MonoBehaviour
     private const float WaitTimeFrequency = 0.1f;
 
 
-    public float RmsValue;
+    /*public float RmsValue;*/
     public float Amplitude;
     public float Frequency;
 
     public float maxAmplitude;
     public float minAmplitude;
 
-    public float[] _samples;
+    private float[] _samples;
     private float[] _spectrum;
-    private int _fSample;
+    private int _sampleRate;
 
     private bool isSoundMeasureStarted;
 
@@ -47,6 +48,17 @@ public class AudioMeasure : MonoBehaviour
     private IEnumerator amplitudeCoroutine;
     private IEnumerator frequencyCoroutine;
 
+    public int lowFrequencyBoundary;
+    public int highFrequencyBoundary;
+
+    public int lowerSpectrum;
+    public int highSpectrum;
+
+    public Slider LowFrequencySlider;
+    public Slider HighFrequencySlider;
+    public Text UI_LowFrequencyBound;
+    public Text UI_HighFrequencyBound;
+
     private void Awake()
     {
 
@@ -55,7 +67,25 @@ public class AudioMeasure : MonoBehaviour
         UI_Frequency.text = " - Hz";
         UI_Amplitude.text = " - dB";
 
+        lowFrequencyBoundary = 0;
+        highFrequencyBoundary = 20000;
+
+        _sampleRate = AudioSettings.outputSampleRate;
+
+        lowerSpectrum = (lowFrequencyBoundary * SpectrumWindow * 2) / _sampleRate;
+        highSpectrum = (highSpectrum * SpectrumWindow * 2) / _sampleRate;
+
+        //Adds a listener to sliders and invokes a method when the value changes.
+        LowFrequencySlider.onValueChanged.AddListener(delegate { LowFrequencySliderChange(); });
+        HighFrequencySlider.onValueChanged.AddListener(delegate { HighFrequencySliderChange(); });
     }
+
+    private void Update()
+    {
+        UI_LowFrequencyBound.text = lowFrequencyBoundary.ToString();
+        UI_HighFrequencyBound.text = highFrequencyBoundary.ToString();
+    }
+
 
     public void StartMeasureMicrophone()
     {
@@ -75,7 +105,10 @@ public class AudioMeasure : MonoBehaviour
 
         _samples = new float[SampleWindow];
         _spectrum = new float[SpectrumWindow];
-        _fSample = AudioSettings.outputSampleRate;
+        
+
+        lowerSpectrum = lowFrequencyBoundary * SpectrumWindow * 2 / _sampleRate;
+        highSpectrum = highFrequencyBoundary * SpectrumWindow * 2 / _sampleRate;
 
         microphoneAudioSource.outputAudioMixerGroup = audioMixerGroup;
 
@@ -113,41 +146,44 @@ public class AudioMeasure : MonoBehaviour
 
     private void UpdateFrequency()
     {
-        float maxV = 0;
-        var maxN = 0;
+        lowerSpectrum = (lowFrequencyBoundary * SpectrumWindow * 2) / _sampleRate;
+        highSpectrum = (highFrequencyBoundary * SpectrumWindow * 2) / _sampleRate;
+
+        float maxSpectrum = 0;
+        var maxIndex = 0;
         int j;
         Frequency = 0;
 
         microphoneAudioSource.GetSpectrumData(_spectrum, 0, FFTWindow.BlackmanHarris);
 
         // find the max in spectrum 
-        for (j = 0; j < SpectrumWindow; j++)
+        for (j = lowerSpectrum; j < highSpectrum; j++)
         {
             _spectrum[j] *= ScaleFactorSpectrum;
-            if (_spectrum[j] > maxV && _spectrum[j] > Threshold)
+            
+            if (_spectrum[j] > maxSpectrum && _spectrum[j] > Threshold)
             {
-                maxV = _spectrum[j];
-                maxN = j; // index of max
+                maxSpectrum = _spectrum[j];
+                maxIndex = j; // index of max
             }
         }
 
-        float freqN = maxN;
+        float freqComponent = maxIndex;
 
         // interpolate index using neighbours
-        if (maxN > 0 && maxN < SpectrumWindow - 1)
+        if (maxIndex > 0 && maxIndex < SpectrumWindow - 1)
         {
-            var dL = _spectrum[maxN - 1] / _spectrum[maxN];
-            var dR = _spectrum[maxN + 1] / _spectrum[maxN];
-            freqN += 0.5f * (dR * dR - dL * dL);
+            var dL = _spectrum[maxIndex - 1] / _spectrum[maxIndex];
+            var dR = _spectrum[maxIndex + 1] / _spectrum[maxIndex];
+            freqComponent += 0.5f * (dR * dR - dL * dL);
         }
-        Frequency = freqN * (_fSample / 2) / SpectrumWindow;
+        Frequency = freqComponent * (_sampleRate / 2) / SpectrumWindow;
+
 
         UI_Frequency.text = Mathf.RoundToInt(SmoothFrequencyAverage(Frequency)) + "Hz";
-        /*UI_Frequency.text = Mathf.RoundToInt(Frequency) + "Hz";*/
+
     }
 
-
-    
 
     private void UpdateAmplitude()
     {
@@ -158,7 +194,6 @@ public class AudioMeasure : MonoBehaviour
         microphoneAudioSource.GetOutputData(_samples, 0); // fill array with samples
 
         
-
         // sum of squared samples
         for (i = 0; i < SampleWindow; i++)
         {
@@ -170,13 +205,26 @@ public class AudioMeasure : MonoBehaviour
 
         /*RmsValue = Mathf.Sqrt(sum / SampleWindow); // rms = square root of average
         Amplitude = 20 * Mathf.Log10(RmsValue / RefValue); // calculate the dB value*/
-        Debug.Log(sum);
+        /*Debug.Log(sum);*/
         Amplitude = 10 * Mathf.Log10(sum / SampleWindow) + 20;
 
         if (Amplitude < 0) Amplitude = 0; // clamp it to -160dB min
         UI_Amplitude.text = Mathf.RoundToInt(SmoothAmplitudeAverage(Amplitude)) + "dB";
         /*UI_Amplitude.text = Mathf.RoundToInt(Amplitude) + "dB";*/
 
+    }
+
+    public void LowFrequencySliderChange()
+    {
+        lowFrequencyBoundary = (int)LowFrequencySlider.value;
+        UI_LowFrequencyBound.text = lowFrequencyBoundary.ToString();
+
+    }
+
+    public void HighFrequencySliderChange()
+    {
+        highFrequencyBoundary = (int)HighFrequencySlider.value;
+        UI_HighFrequencyBound.text = highFrequencyBoundary.ToString();
     }
 
 
@@ -208,7 +256,7 @@ public class AudioMeasure : MonoBehaviour
 
     private float SmoothAmplitudeAverage(float currentAmplitude)
     {
-        if (historyAmplitudeData.Count == 10)
+        if (historyAmplitudeData.Count == 5)
         {
             historyAmplitudeData.RemoveAt(0);
         }
@@ -219,7 +267,7 @@ public class AudioMeasure : MonoBehaviour
     private float SmoothFrequencyAverage(float currentAmplitude)
     {
 
-        if (historyFrequencyData.Count == 20)
+        if (historyFrequencyData.Count == 5)
         {
             historyFrequencyData.RemoveAt(0);
         }
@@ -251,20 +299,6 @@ public class AudioMeasure : MonoBehaviour
         Microphone.End(MicDevice);
     }
 
-    /*private void Update()
-    {
-        if (isSoundMeasureStarted)
-        {
-            for (int i = 1; i < SampleWindow - 1; i++)
-            {
-                Debug.DrawLine(new Vector3(i - 1, _samples[i] + 10, 0), new Vector3(i, _samples[i + 1] + 10, 0), Color.red);
-                Debug.DrawLine(new Vector3(i - 1, Mathf.Log(_samples[i - 1]) + 10, 2), new Vector3(i, Mathf.Log(_samples[i]) + 10, 2), Color.cyan);
-                Debug.DrawLine(new Vector3(Mathf.Log(i - 1), _samples[i - 1] - 10, 1), new Vector3(Mathf.Log(i), _samples[i] - 10, 1), Color.green);
-                Debug.DrawLine(new Vector3(Mathf.Log(i - 1), Mathf.Log(_samples[i - 1]), 3), new Vector3(Mathf.Log(i), Mathf.Log(_samples[i]), 3), Color.blue);
-            }
-        }
-        
-    }*/
 
     /* void OnApplicationFocus(bool focus)
      {
